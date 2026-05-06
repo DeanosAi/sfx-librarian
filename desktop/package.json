@@ -10,12 +10,11 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {
     "electron": "^32.0.0",
-    "electron-builder": "^25.0.0",
-    "@electron/rebuild": "^3.6.0"
+    "electron-builder": "^25.0.0"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0"
@@ -33,20 +32,17 @@
       "renderer/**/*",
       "package.json"
     ],
-    "_buildNote": "The 100MB+ sfx_library.db is NOT bundled inside the .dmg (GitHub repo size limits, and most users will rebuild it for their own library). On first launch the app shows a Settings dialog where the user picks their .db file.",
     "mac": {
       "target": [
         { "target": "dmg", "arch": ["arm64", "x64"] }
       ],
       "category": "public.app-category.video",
-      "icon": "build/icon.icns",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "identity": null
     },
     "dmg": {
-      "title": "${productName} ${version}",
-      "icon": "build/icon.icns"
+      "title": "${productName} ${version}"
     }
   }
 }
