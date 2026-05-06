@@ -1,6 +1,6 @@
 {
   "name": "editors-librarian",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Searchable indexed library for editors — SFX, music, B-roll, and more.",
   "main": "main.js",
   "author": "Dean Bradnam",
@@ -31,6 +31,9 @@
       "preload.js",
       "renderer/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      { "from": "build/drag-icon.png", "to": "drag-icon.png" }
     ],
     "mac": {
       "target": [

@@ -24,4 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   readAudio:        (args)   => ipcRenderer.invoke('audio:read', args || {}),
   resolveAudioPath: (args)   => ipcRenderer.invoke('audio:resolve-path', args || {}),
   revealInFinder:   (args)   => ipcRenderer.invoke('reveal', args || {}),
+
+  /** Synchronous fire-and-forget — must be called inside a dragstart event handler. */
+  startDragFile:    (filepath_relative) => ipcRenderer.send('start-drag-file', filepath_relative),
 });

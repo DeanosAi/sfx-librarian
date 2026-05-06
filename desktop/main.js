@@ -7,7 +7,7 @@
  * Renderer never touches Node APIs directly (contextIsolation: true).
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
@@ -405,6 +405,36 @@ ipcMain.handle('reveal', (_e, { absolutePath }) => {
   if (!absolutePath) return false;
   shell.showItemInFolder(absolutePath);
   return true;
+});
+
+/**
+ * Native OS-level drag-out. Renderer calls this from a `dragstart` listener.
+ * Premiere (and any other macOS app that accepts file drops) treats this the
+ * same as dragging from Finder — because that's exactly what it is at the
+ * AppKit level.
+ *
+ * Important: must be called synchronously inside the dragstart event, which
+ * is why this is `ipcMain.on` (fire-and-forget) not `handle` (async).
+ */
+ipcMain.on('start-drag-file', (event, filepath_relative) => {
+  const settings = loadSettings();
+  const root = settings.libraryPath;
+  if (!root) return;
+  const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
+  if (!fs.existsSync(full)) return;
+
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'drag-icon.png')
+    : path.join(__dirname, 'build', 'drag-icon.png');
+  let icon;
+  try {
+    icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) icon = nativeImage.createEmpty();
+  } catch (e) {
+    icon = nativeImage.createEmpty();
+  }
+
+  event.sender.startDrag({ file: full, icon });
 });
 
 // ---- window --------------------------------------------------------------

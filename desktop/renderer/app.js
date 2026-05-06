@@ -373,7 +373,7 @@
     el.innerHTML = `
       <div class="result-header">
         <button class="play-btn" type="button" aria-label="Play or pause">${ICON_PLAY}</button>
-        <span class="filename" draggable="true" title="Drag into Premiere or click to play">${escapeHtml(row.filename)}</span>
+        <span class="filename" draggable="true" title="Drag into Premiere — or click to play">${escapeHtml(row.filename)}</span>
         <span class="meta">${escapeHtml(meta)}</span>
         <button class="reveal-btn" type="button" title="Reveal in Finder">📂</button>
       </div>
@@ -394,6 +394,15 @@
       e.stopPropagation();
       try { await window.data.revealInFinder(row); }
       catch (err) { renderError(String(err.message || err)); }
+    });
+    // Native OS file drag — Premiere (and Finder, etc.) accepts this as a
+    // real file drop, the same as dragging from Finder. Falls through to
+    // Electron's main process via the IPC bridge.
+    const $filename = el.querySelector('.filename');
+    $filename.addEventListener('dragstart', (e) => {
+      // Cancel the default HTML5 drag; the main-process startDrag takes over.
+      e.preventDefault();
+      window.api.startDragFile(row.filepath_relative);
     });
     return el;
   }
