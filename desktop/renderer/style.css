@@ -284,6 +284,14 @@ header {
   border-color: #2a8e4a;
 }
 
+/* When the result has an active in/out trim, mark the send button so it's
+ * obvious the click will send only the trimmed region. */
+.result.has-trim .send-btn::after {
+  content: ' ✂';
+  color: #ffd17a;
+}
+.result.has-trim .send-btn:hover::after { color: #fff8a8; }
+
 .category-pill {
   display: inline-block;
   padding: 1px 6px; border-radius: 3px;

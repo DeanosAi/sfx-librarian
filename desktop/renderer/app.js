@@ -410,8 +410,20 @@
     $sendBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       $sendBtn.disabled = true;
+      const oldText = $sendBtn.textContent;
       try {
-        const r = await window.api.sendToPremiere({ filepath_relative: row.filepath_relative });
+        const inSec  = parseFloat(el.dataset.inSec  || 'NaN');
+        const outSec = parseFloat(el.dataset.outSec || 'NaN');
+        const hasTrim = !isNaN(inSec) && !isNaN(outSec) && outSec > inSec;
+
+        let r;
+        if (hasTrim) {
+          $sendBtn.textContent = '… trimming';
+          const tempPath = await window.data.trimToTempFile(row, inSec, outSec);
+          r = await window.api.sendToPremiere({ absolutePath: tempPath });
+        } else {
+          r = await window.api.sendToPremiere({ filepath_relative: row.filepath_relative });
+        }
         if (r && r.error) {
           renderError(r.error);
         } else {
@@ -422,6 +434,7 @@
         renderError(String(err.message || err));
       } finally {
         $sendBtn.disabled = false;
+        $sendBtn.textContent = oldText;
       }
     });
     // Native OS file drag — Premiere (and Finder, etc.) accepts this as a
@@ -507,6 +520,7 @@
       handleHitIn.setAttribute('x', (x - HH / 2).toFixed(2));
       handleHitOut.setAttribute('x', (x + w - HH / 2).toFixed(2));
       wrap.classList.add('has-selection');
+      resultEl.classList.add('has-trim');
       const inSec = lo * duration, outSec = hi * duration;
       resultEl.dataset.inSec = String(inSec);
       resultEl.dataset.outSec = String(outSec);
@@ -525,6 +539,7 @@
       handleHitIn.setAttribute('x', String(-HH));
       handleHitOut.setAttribute('x', String(-HH));
       wrap.classList.remove('has-selection');
+      resultEl.classList.remove('has-trim');
       rangeTimes.textContent = '';
       delete resultEl.dataset.inSec;
       delete resultEl.dataset.outSec;

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
   resolveAudioPath: (args)   => ipcRenderer.invoke('audio:resolve-path', args || {}),
   revealInFinder:   (args)   => ipcRenderer.invoke('reveal', args || {}),
   sendToPremiere:   (args)   => ipcRenderer.invoke('send-to-premiere', args || {}),
+  saveTempAudio:    (args)   => ipcRenderer.invoke('audio:save-temp', args || {}),
   version:          ()       => ipcRenderer.invoke('app:version'),
 
   /** Synchronous fire-and-forget — must be called inside a dragstart event handler. */

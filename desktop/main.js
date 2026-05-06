@@ -10,6 +10,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { spawn } = require('node:child_process');
 const Database = require('better-sqlite3');
 
@@ -418,27 +419,70 @@ ipcMain.handle('reveal', (_e, { absolutePath }) => {
  * is why this is `ipcMain.on` (fire-and-forget) not `handle` (async).
  */
 /**
- * Open the file directly in Premiere via macOS `open -a`. Premiere imports
- * it into the active project's bin. Works around the fact that Electron's
- * file-drag mechanism doesn't always carry the rich media UTI metadata
- * Premiere expects on drop.
+ * Open a file in Premiere via macOS `open -a`. Premiere imports it into the
+ * active project's bin. Accepts either a `filepath_relative` (resolved
+ * against the user's audio folder) or a direct `absolutePath` (used for
+ * trimmed temp files generated in-app).
  */
-ipcMain.handle('send-to-premiere', (_e, { filepath_relative }) => {
-  const settings = loadSettings();
-  const root = settings.libraryPath;
-  if (!root) return { error: 'audio folder not set — open Settings and pick it' };
-  const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
+ipcMain.handle('send-to-premiere', (_e, args = {}) => {
+  let full = null;
+  if (args.absolutePath) {
+    full = args.absolutePath;
+  } else if (args.filepath_relative) {
+    const settings = loadSettings();
+    const root = settings.libraryPath;
+    if (!root) return { error: 'audio folder not set — open Settings and pick it' };
+    full = path.join(root, String(args.filepath_relative).replace(/[\\/]/g, path.sep));
+  }
+  if (!full) return { error: 'no file specified' };
   if (!fs.existsSync(full)) return { error: `file missing on disk: ${full}` };
   if (process.platform !== 'darwin') {
     return { error: 'Send to Premiere only works on macOS for now' };
   }
-  const appName = (settings.premiereAppName || 'Adobe Premiere Pro').trim();
+  const appName = (loadSettings().premiereAppName || 'Adobe Premiere Pro').trim();
   try {
     const child = spawn('open', ['-a', appName, full], { detached: true, stdio: 'ignore' });
     child.unref();
     return { success: true, appName, full };
   } catch (e) {
     return { error: 'spawn failed: ' + (e && e.message ? e.message : String(e)) };
+  }
+});
+
+// ----- temp trim files -------------------------------------------------
+
+const TEMP_TRIMS_DIR = path.join(os.tmpdir(), 'editors-librarian');
+const TEMP_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function cleanTempTrims() {
+  try {
+    if (!fs.existsSync(TEMP_TRIMS_DIR)) return;
+    const now = Date.now();
+    for (const f of fs.readdirSync(TEMP_TRIMS_DIR)) {
+      const full = path.join(TEMP_TRIMS_DIR, f);
+      try {
+        const stats = fs.statSync(full);
+        if (now - stats.mtimeMs > TEMP_TTL_MS) fs.unlinkSync(full);
+      } catch (e) { /* keep going */ }
+    }
+  } catch (e) { /* non-fatal */ }
+}
+
+/**
+ * Write an ArrayBuffer (the renderer-encoded trimmed WAV) to OS tmp, and
+ * return its absolute path. The renderer hands this path to send-to-premiere.
+ */
+ipcMain.handle('audio:save-temp', (_e, { bytes, filename }) => {
+  if (!bytes || !filename) return { error: 'missing args' };
+  try {
+    fs.mkdirSync(TEMP_TRIMS_DIR, { recursive: true });
+    const safe = String(filename).replace(/[^A-Za-z0-9._-]/g, '_');
+    const stamp = Date.now().toString(36);
+    const full = path.join(TEMP_TRIMS_DIR, `${stamp}_${safe}`);
+    fs.writeFileSync(full, Buffer.from(bytes));
+    return { absolutePath: full };
+  } catch (e) {
+    return { error: 'write failed: ' + (e && e.message ? e.message : String(e)) };
   }
 });
 
@@ -490,6 +534,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   openDb();
+  cleanTempTrims();
   createWindow();
 
   app.on('activate', () => {
