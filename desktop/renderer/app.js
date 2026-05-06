@@ -90,6 +90,22 @@
     const picked = await window.data.pickLibrary();
     if (picked) refreshSettings();
   });
+  if ($settingPremiereName) {
+    $settingPremiereName.addEventListener('change', async () => {
+      await window.data.setSettings({ premiereAppName: $settingPremiereName.value.trim() });
+    });
+  }
+  if ($settingPremiereDetect) {
+    $settingPremiereDetect.addEventListener('click', async () => {
+      const detected = await window.api.detectPremiere();
+      if (detected) {
+        $settingPremiereName.value = detected;
+        await window.data.setSettings({ premiereAppName: detected });
+      } else {
+        $settingPremiereName.placeholder = 'no Premiere found in /Applications';
+      }
+    });
+  }
 
   $player.addEventListener('play', () => {
     setAllPlayBtns(ICON_PLAY);
@@ -203,9 +219,19 @@
   function closeSettings() { $settingsModal.classList.remove('show'); }
 
   async function refreshSettings() {
-    const [s, db] = await Promise.all([window.data.getSettings(), window.data.dbStatus()]);
+    const [s, db, detected] = await Promise.all([
+      window.data.getSettings(),
+      window.data.dbStatus(),
+      window.api.detectPremiere(),
+    ]);
     $settingDb.textContent = db && db.dbPath ? db.dbPath : '(not set — pick the sfx_library.db file)';
     $settingLibrary.textContent = s && s.libraryPath ? s.libraryPath : '(not set — pick your audio root folder)';
+    if ($settingPremiereName) {
+      $settingPremiereName.value = (s && s.premiereAppName) || '';
+      $settingPremiereName.placeholder = detected
+        ? `auto-detect → ${detected}`
+        : 'no Premiere found in /Applications';
+    }
   }
 
   // ----- filters -----

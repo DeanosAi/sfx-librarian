@@ -11,7 +11,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('ele
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
 const Database = require('better-sqlite3');
 
 const AUDIO_MIME = {
@@ -419,12 +419,54 @@ ipcMain.handle('reveal', (_e, { absolutePath }) => {
  * is why this is `ipcMain.on` (fire-and-forget) not `handle` (async).
  */
 /**
+ * Find an installed Premiere variant by scanning /Applications/. Returns the
+ * full app name (without .app suffix) suitable for `open -a`, or null if
+ * nothing is found. Prefers the most recent year (highest folder number).
+ */
+function detectPremiereApp() {
+  if (process.platform !== 'darwin') return null;
+  const candidates = [];
+  try {
+    for (const entry of fs.readdirSync('/Applications')) {
+      if (!/premiere/i.test(entry)) continue;
+      // Walk one level deeper too — Adobe installs at /Applications/Adobe Premiere Pro 2026/Adobe Premiere Pro 2026.app
+      const top = path.join('/Applications', entry);
+      try {
+        const st = fs.statSync(top);
+        if (st.isDirectory() && entry.endsWith('.app')) {
+          candidates.push(entry.replace(/\.app$/, ''));
+        } else if (st.isDirectory()) {
+          for (const sub of fs.readdirSync(top)) {
+            if (sub.endsWith('.app') && /premiere/i.test(sub)) {
+              candidates.push(sub.replace(/\.app$/, ''));
+            }
+          }
+        }
+      } catch (e) { /* skip */ }
+    }
+  } catch (e) { /* skip */ }
+  if (!candidates.length) return null;
+  // Sort so newest year wins ("Adobe Premiere Pro 2026" > "...2025" > "...CC")
+  candidates.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  return candidates[0];
+}
+
+ipcMain.handle('detect-premiere', () => detectPremiereApp());
+
+/**
  * Open a file in Premiere via macOS `open -a`. Premiere imports it into the
  * active project's bin. Accepts either a `filepath_relative` (resolved
- * against the user's audio folder) or a direct `absolutePath` (used for
- * trimmed temp files generated in-app).
+ * against the user's audio folder) or a direct `absolutePath`.
+ *
+ * App name resolution order:
+ *   1. settings.premiereAppName (explicit override)
+ *   2. Auto-detected from /Applications/
+ *   3. "Adobe Premiere Pro" (last-ditch)
+ *
+ * `execFile` captures the actual exit code so failures are reported back
+ * instead of silently "succeeding".
  */
-ipcMain.handle('send-to-premiere', (_e, args = {}) => {
+ipcMain.handle('send-to-premiere', async (_e, args = {}) => {
   let full = null;
   if (args.absolutePath) {
     full = args.absolutePath;
@@ -439,14 +481,27 @@ ipcMain.handle('send-to-premiere', (_e, args = {}) => {
   if (process.platform !== 'darwin') {
     return { error: 'Send to Premiere only works on macOS for now' };
   }
-  const appName = (loadSettings().premiereAppName || 'Adobe Premiere Pro').trim();
-  try {
-    const child = spawn('open', ['-a', appName, full], { detached: true, stdio: 'ignore' });
-    child.unref();
-    return { success: true, appName, full };
-  } catch (e) {
-    return { error: 'spawn failed: ' + (e && e.message ? e.message : String(e)) };
-  }
+
+  const settings = loadSettings();
+  const explicit = (settings.premiereAppName || '').trim();
+  const detected = detectPremiereApp();
+  const appName = explicit || detected || 'Adobe Premiere Pro';
+
+  return await new Promise((resolve) => {
+    execFile('open', ['-a', appName, full], { timeout: 10000 }, (error, stdout, stderr) => {
+      if (error) {
+        const msg = (stderr && stderr.toString().trim()) || error.message || 'unknown error';
+        resolve({
+          error: `Couldn't open in "${appName}": ${msg}. ` +
+                 `Try setting the exact Premiere app name in Settings.`,
+          appName,
+          tried: { explicit, detected },
+        });
+        return;
+      }
+      resolve({ success: true, appName, full });
+    });
+  });
 });
 
 // ----- temp trim files -------------------------------------------------

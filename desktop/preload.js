@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
   resolveAudioPath: (args)   => ipcRenderer.invoke('audio:resolve-path', args || {}),
   revealInFinder:   (args)   => ipcRenderer.invoke('reveal', args || {}),
   sendToPremiere:   (args)   => ipcRenderer.invoke('send-to-premiere', args || {}),
+  detectPremiere:   ()       => ipcRenderer.invoke('detect-premiere'),
   saveTempAudio:    (args)   => ipcRenderer.invoke('audio:save-temp', args || {}),
   version:          ()       => ipcRenderer.invoke('app:version'),
 
