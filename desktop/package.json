@@ -1,0 +1,52 @@
+{
+  "name": "editors-librarian",
+  "version": "0.1.0",
+  "description": "Searchable indexed library for editors — SFX, music, B-roll, and more.",
+  "main": "main.js",
+  "author": "Dean Bradnam",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0",
+    "@electron/rebuild": "^3.6.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0"
+  },
+  "build": {
+    "appId": "com.deanbradnam.editors-librarian",
+    "productName": "Editors Librarian",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "_buildNote": "The 100MB+ sfx_library.db is NOT bundled inside the .dmg (GitHub repo size limits, and most users will rebuild it for their own library). On first launch the app shows a Settings dialog where the user picks their .db file.",
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "category": "public.app-category.video",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "icon": "build/icon.icns"
+    }
+  }
+}

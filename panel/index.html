@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SFX Librarian</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <h1>SFX Librarian</h1>
+      <div class="header-right">
+        <button id="lib-btn" class="lib-btn" type="button">📁 set library…</button>
+        <div id="stats" class="stats">loading…</div>
+      </div>
+    </div>
+    <div class="search-wrap">
+      <input
+        type="text"
+        id="q"
+        placeholder="Search a vibe, sound name, mood…  e.g.  bull whip · ethereal pad · tense build"
+        autocomplete="off"
+        spellcheck="false"
+        autofocus
+      >
+      <div id="suggestions" class="suggestions" role="listbox"></div>
+    </div>
+    <div id="filters" class="filters" aria-label="Filter by category"></div>
+    <div id="hint" class="hint"></div>
+  </header>
+
+  <main id="results"></main>
+
+  <footer id="player-bar">
+    <button id="stop-btn" type="button" title="Stop and clear" aria-label="Stop">⏹</button>
+    <audio id="player" controls preload="none"></audio>
+    <span id="now-playing"></span>
+    <span id="signature" aria-hidden="true">A Plugin by Dean</span>
+  </footer>
+
+  <div id="lib-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="lib-modal-title">
+    <div class="modal-card">
+      <h2 id="lib-modal-title">SFX library folder</h2>
+      <p class="modal-help">
+        Tell the panel where this machine's copy of the SFX library lives. The same .db file works on
+        any machine — only the local folder path changes per computer.
+      </p>
+      <p class="modal-current"><span class="modal-label">Current:</span> <span id="lib-current">—</span></p>
+      <div class="modal-input-row">
+        <input type="text" id="lib-input" class="modal-input"
+               placeholder="e.g. /Volumes/LiSTNE SSD/SFX  or  E:\…\SFX">
+        <button id="lib-browse" type="button" class="btn-secondary" title="Open folder picker">📂 Browse…</button>
+      </div>
+      <p id="lib-note" class="modal-note"></p>
+      <div class="modal-actions">
+        <button id="lib-cancel" type="button" class="btn-secondary">Cancel</button>
+        <button id="lib-save" type="button" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

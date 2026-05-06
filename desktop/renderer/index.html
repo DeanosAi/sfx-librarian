@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: sfxlib:; media-src 'self' sfxlib: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';">
+  <title>Editor's Librarian</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <div class="brand-title">Editor's<br>Librarian</div>
+      </div>
+      <nav id="tabs">
+        <button class="tab active" data-kind="sfx">
+          <span class="tab-icon">🔊</span>
+          <span class="tab-label">SFX</span>
+        </button>
+        <button class="tab" data-kind="music">
+          <span class="tab-icon">🎵</span>
+          <span class="tab-label">Music</span>
+        </button>
+        <button class="tab disabled" data-kind="broll" disabled title="Coming soon — index B-roll videos with AI tags">
+          <span class="tab-icon">🎬</span>
+          <span class="tab-label">B-Roll</span>
+          <span class="tab-soon">soon</span>
+        </button>
+        <button class="tab disabled" data-kind="transitions" disabled title="Coming soon">
+          <span class="tab-icon">✂</span>
+          <span class="tab-label">Transitions</span>
+          <span class="tab-soon">soon</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <button id="settings-btn" type="button" class="settings-btn" title="Settings">⚙ Settings</button>
+        <span id="signature">A Plugin by Dean</span>
+      </div>
+    </aside>
+
+    <main id="main">
+      <header>
+        <div class="header-row">
+          <h1 id="tab-heading">SFX</h1>
+          <div class="header-right">
+            <div id="stats" class="stats">loading…</div>
+          </div>
+        </div>
+        <div class="search-wrap">
+          <input
+            type="text"
+            id="q"
+            placeholder="Search a vibe, sound name, mood…"
+            autocomplete="off"
+            spellcheck="false"
+            autofocus
+          >
+          <div id="suggestions" class="suggestions" role="listbox"></div>
+        </div>
+        <div id="filters" class="filters"></div>
+        <div id="hint" class="hint"></div>
+      </header>
+
+      <section id="results"></section>
+    </main>
+
+    <footer id="player-bar">
+      <button id="stop-btn" type="button" title="Stop and clear">⏹</button>
+      <audio id="player" controls preload="none"></audio>
+      <span id="now-playing"></span>
+    </footer>
+  </div>
+
+  <!-- Settings modal -->
+  <div id="settings-modal" class="modal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <h2>Settings</h2>
+
+      <div class="setting-row">
+        <div class="setting-label">Library database</div>
+        <div class="setting-value" id="setting-db">—</div>
+        <button id="setting-db-pick" type="button" class="btn-secondary">Choose…</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-label">Audio folder</div>
+        <div class="setting-value" id="setting-library">—</div>
+        <button id="setting-library-pick" type="button" class="btn-secondary">Choose…</button>
+      </div>
+
+      <p class="modal-help">
+        The database tells the app what's in your library. The audio folder tells it
+        where the actual files live on this machine — pick the folder that has all
+        your SFX inside it. The same database works on any machine; only the folder
+        path changes per computer.
+      </p>
+
+      <div class="modal-actions">
+        <button id="settings-close" type="button" class="btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="tabs.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "id": "com.deanbradnam.sfx-librarian",
+  "name": "SFX Librarian",
+  "version": "0.1.0",
+  "main": "index.html",
+  "manifestVersion": 5,
+  "host": [
+    {
+      "app": "premierepro",
+      "minVersion": "25.0.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "sfx-librarian-panel",
+      "label": {
+        "default": "SFX Librarian"
+      },
+      "minimumSize": { "width": 320, "height": 400 },
+      "preferredDockedSize": { "width": 380, "height": 700 },
+      "icons": [
+        {
+          "width": 48, "height": 48,
+          "path": "icons/icon-48.png",
+          "scale": [1, 2],
+          "theme": ["all"],
+          "species": ["pluginList"]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 48, "height": 48,
+      "path": "icons/icon-48.png",
+      "scale": [1, 2],
+      "theme": ["all"],
+      "species": ["pluginList"]
+    }
+  ],
+  "requiredPermissions": {
+    "localFileSystem": "fullAccess",
+    "clipboard": "readAndWrite",
+    "network": {
+      "domains": []
+    }
+  }
+}

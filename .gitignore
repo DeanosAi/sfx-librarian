@@ -1,0 +1,40 @@
+# Environment
+.venv/
+venv/
+env/
+
+# Node / Electron
+node_modules/
+desktop/dist/
+desktop/out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Data + logs (the DB is the artifact, but we don't commit it)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+failed.log
+*.log
+
+# Whisper model cache
+.whisper_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local config
+.claude/

@@ -1,0 +1,64 @@
+name: Build Mac App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/build-mac.yml'
+  workflow_dispatch:  # lets you trigger manually from GitHub UI
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true   # in case the .db ends up tracked via Git LFS
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Verify DB is present (or fail fast)
+        run: |
+          if [ ! -f data/sfx_library.db ]; then
+            echo "::warning::data/sfx_library.db is missing — packaged app will need a manual DB pick on first run."
+          else
+            ls -lh data/sfx_library.db
+          fi
+
+      - name: Build macOS app
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # don't try to code-sign; skip notarisation
+        run: npm run build:mac
+
+      - name: List build output
+        run: ls -lh desktop/dist || true
+
+      - name: Upload .dmg as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: editors-librarian-mac
+          path: desktop/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+      # Optional: also publish to a release on tagged pushes
+      - name: Publish release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
