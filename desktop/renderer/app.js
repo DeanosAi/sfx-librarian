@@ -42,6 +42,15 @@
   // ----- bootstrap -----
 
   refreshAll();
+  loadVersion();
+
+  async function loadVersion() {
+    try {
+      const v = await window.api.version();
+      const $v = document.getElementById('version');
+      if ($v && v) $v.textContent = 'v' + v;
+    } catch (e) {}
+  }
 
   document.addEventListener('kind-changed', () => {
     selectedCategories.clear();
@@ -375,6 +384,7 @@
         <button class="play-btn" type="button" aria-label="Play or pause">${ICON_PLAY}</button>
         <span class="filename" draggable="true" title="Drag into Premiere — or click to play">${escapeHtml(row.filename)}</span>
         <span class="meta">${escapeHtml(meta)}</span>
+        <button class="send-btn" type="button" title="Open this file in Premiere — Premiere imports it into the active project's bin">→ Pr</button>
         <button class="reveal-btn" type="button" title="Reveal in Finder">📂</button>
       </div>
       <div class="mood">
@@ -386,14 +396,33 @@
     `;
 
     el.querySelector('.result-header').addEventListener('click', (e) => {
-      // Reveal button stops here — its own handler runs separately.
+      // Action buttons handle their own clicks — don't trigger play.
       if (e.target.classList.contains('reveal-btn')) return;
+      if (e.target.classList.contains('send-btn')) return;
       togglePlayRow(row, el);
     });
     el.querySelector('.reveal-btn').addEventListener('click', async (e) => {
       e.stopPropagation();
       try { await window.data.revealInFinder(row); }
       catch (err) { renderError(String(err.message || err)); }
+    });
+    const $sendBtn = el.querySelector('.send-btn');
+    $sendBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      $sendBtn.disabled = true;
+      try {
+        const r = await window.api.sendToPremiere({ filepath_relative: row.filepath_relative });
+        if (r && r.error) {
+          renderError(r.error);
+        } else {
+          $sendBtn.classList.add('flash');
+          setTimeout(() => $sendBtn.classList.remove('flash'), 800);
+        }
+      } catch (err) {
+        renderError(String(err.message || err));
+      } finally {
+        $sendBtn.disabled = false;
+      }
     });
     // Native OS file drag — Premiere (and Finder, etc.) accepts this as a
     // real file drop, the same as dragging from Finder. Falls through to

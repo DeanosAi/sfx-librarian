@@ -10,6 +10,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 const Database = require('better-sqlite3');
 
 const AUDIO_MIME = {
@@ -416,6 +417,33 @@ ipcMain.handle('reveal', (_e, { absolutePath }) => {
  * Important: must be called synchronously inside the dragstart event, which
  * is why this is `ipcMain.on` (fire-and-forget) not `handle` (async).
  */
+/**
+ * Open the file directly in Premiere via macOS `open -a`. Premiere imports
+ * it into the active project's bin. Works around the fact that Electron's
+ * file-drag mechanism doesn't always carry the rich media UTI metadata
+ * Premiere expects on drop.
+ */
+ipcMain.handle('send-to-premiere', (_e, { filepath_relative }) => {
+  const settings = loadSettings();
+  const root = settings.libraryPath;
+  if (!root) return { error: 'audio folder not set — open Settings and pick it' };
+  const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
+  if (!fs.existsSync(full)) return { error: `file missing on disk: ${full}` };
+  if (process.platform !== 'darwin') {
+    return { error: 'Send to Premiere only works on macOS for now' };
+  }
+  const appName = (settings.premiereAppName || 'Adobe Premiere Pro').trim();
+  try {
+    const child = spawn('open', ['-a', appName, full], { detached: true, stdio: 'ignore' });
+    child.unref();
+    return { success: true, appName, full };
+  } catch (e) {
+    return { error: 'spawn failed: ' + (e && e.message ? e.message : String(e)) };
+  }
+});
+
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.on('start-drag-file', (event, filepath_relative) => {
   const settings = loadSettings();
   const root = settings.libraryPath;
