@@ -31,6 +31,8 @@
   const $settingDbPick = $('setting-db-pick');
   const $settingLibrary = $('setting-library');
   const $settingLibraryPick = $('setting-library-pick');
+  const $settingPremiereName = $('setting-premiere-name');
+  const $settingPremiereDetect = $('setting-premiere-detect');
 
   let currentPlayingId = null;
   let activeSuggestionIdx = -1;
