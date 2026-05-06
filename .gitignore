@@ -8,6 +8,12 @@ node_modules/
 desktop/dist/
 desktop/out/
 
+# Build artifacts (downloaded from GitHub Actions for testing)
+*.dmg
+*.zip
+*.exe
+*.AppImage
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,6 +1,6 @@
 {
   "name": "editors-librarian",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Searchable indexed library for editors — SFX, music, B-roll, and more.",
   "main": "main.js",
   "author": "Dean Bradnam",

@@ -12,6 +12,16 @@
   /** Currently active media kind (sfx | music | broll | …). */
   let currentKind = 'sfx';
 
+  /** Most-recently-created blob URL for the playing clip. Revoked when we
+   *  switch to the next clip so we don't leak memory. */
+  let lastBlobUrl = null;
+  function revokeLastBlobUrl() {
+    if (lastBlobUrl) {
+      try { URL.revokeObjectURL(lastBlobUrl); } catch (e) {}
+      lastBlobUrl = null;
+    }
+  }
+
   window.data = {
     setKind(kind) { currentKind = kind; },
     getKind()     { return currentKind; },
@@ -29,13 +39,23 @@
       return window.api.suggest({ q, kind: currentKind, limit });
     },
 
+    /**
+     * Read the file via IPC, wrap it as a Blob, and return an object URL
+     * usable as an <audio> element's src. Revokes the previous URL first.
+     */
     async getAudioUrl(row) {
-      const r = await window.api.resolveAudio({ filepath_relative: row.filepath_relative });
-      if (r && r.url) return r.url;
-      throw new Error(r && r.error ? r.error : 'Could not resolve audio path');
+      revokeLastBlobUrl();
+      const r = await window.api.readAudio({ filepath_relative: row.filepath_relative });
+      if (!r || r.error) throw new Error(r && r.error ? r.error : 'no audio');
+      // r.bytes is an ArrayBuffer (transferred over IPC).
+      const blob = new Blob([r.bytes], { type: r.mime || 'audio/*' });
+      lastBlobUrl = URL.createObjectURL(blob);
+      return lastBlobUrl;
     },
+    revokeAudioUrl: revokeLastBlobUrl,
+
     async revealInFinder(row) {
-      const r = await window.api.resolveAudio({ filepath_relative: row.filepath_relative });
+      const r = await window.api.resolveAudioPath({ filepath_relative: row.filepath_relative });
       if (!r || !r.absolutePath) throw new Error(r && r.error ? r.error : 'no path');
       return window.api.revealInFinder({ absolutePath: r.absolutePath });
     },

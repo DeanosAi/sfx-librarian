@@ -100,6 +100,16 @@
     currentPlayingId = null;
     $nowPlaying.textContent = '';
   });
+  $player.addEventListener('error', () => {
+    const err = $player.error;
+    let msg = 'audio playback error';
+    if (err) {
+      msg += ' (code ' + err.code + ')';
+      if (err.message) msg += ': ' + err.message;
+    }
+    $nowPlaying.textContent = msg;
+    console.error('audio error', err);
+  });
   $player.addEventListener('timeupdate', () => {
     const el = currentRowEl();
     if (!el) return;

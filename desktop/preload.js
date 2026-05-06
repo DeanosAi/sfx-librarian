@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   search:           (args)   => ipcRenderer.invoke('search', args || {}),
   suggest:          (args)   => ipcRenderer.invoke('suggest', args || {}),
 
-  resolveAudio:     (args)   => ipcRenderer.invoke('audio:resolve', args || {}),
+  readAudio:        (args)   => ipcRenderer.invoke('audio:read', args || {}),
+  resolveAudioPath: (args)   => ipcRenderer.invoke('audio:resolve-path', args || {}),
   revealInFinder:   (args)   => ipcRenderer.invoke('reveal', args || {}),
 });

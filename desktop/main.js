@@ -7,10 +7,27 @@
  * Renderer never touches Node APIs directly (contextIsolation: true).
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
+
+const AUDIO_MIME = {
+  '.mp3':  'audio/mpeg',
+  '.wav':  'audio/wav',
+  '.ogg':  'audio/ogg',
+  '.oga':  'audio/ogg',
+  '.flac': 'audio/flac',
+  '.m4a':  'audio/mp4',
+  '.aac':  'audio/aac',
+  '.aif':  'audio/aiff',
+  '.aiff': 'audio/aiff',
+  '.opus': 'audio/opus',
+  '.wma':  'audio/x-ms-wma',
+};
+function audioMime(p) {
+  return AUDIO_MIME[path.extname(p).toLowerCase()] || 'audio/*';
+}
 
 // ---- paths ---------------------------------------------------------------
 
@@ -346,15 +363,42 @@ ipcMain.handle('suggest', (_e, { q, kind, limit }) => {
   return out.map(s => prefix ? prefix + ' ' + s : s);
 });
 
-ipcMain.handle('audio:resolve', (_e, { filepath_relative }) => {
+/**
+ * Read an audio file off disk and return raw bytes + MIME to the renderer.
+ * Renderer wraps the bytes in a Blob and creates an object URL — works in
+ * every Electron build without needing custom protocols, file:// quirks, or
+ * webSecurity tweaks. SFX files are small (a few MB) so loading the whole
+ * file is fast and not memory-pressure relevant.
+ */
+ipcMain.handle('audio:read', (_e, { filepath_relative }) => {
   const settings = loadSettings();
   const root = settings.libraryPath;
-  if (!root) return { error: 'library folder not set' };
+  if (!root) return { error: 'audio folder not set — open Settings and pick it' };
+  const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
+  if (!fs.existsSync(full)) return { error: `file missing on disk: ${full}` };
+  try {
+    const buf = fs.readFileSync(full);
+    return {
+      bytes: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+      mime: audioMime(full),
+      absolutePath: full,
+    };
+  } catch (e) {
+    return { error: 'read failed: ' + (e && e.message ? e.message : String(e)) };
+  }
+});
+
+/**
+ * Just resolve the absolute path (without reading bytes). Used by the
+ * "reveal in Finder" button.
+ */
+ipcMain.handle('audio:resolve-path', (_e, { filepath_relative }) => {
+  const settings = loadSettings();
+  const root = settings.libraryPath;
+  if (!root) return { error: 'audio folder not set' };
   const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
   if (!fs.existsSync(full)) return { error: `file missing: ${full}` };
-  // Use a custom protocol so the renderer can play via blob/URL without
-  // exposing a raw file:// URL (which Chromium restricts in BrowserWindow).
-  return { url: 'sfxlib://' + encodeURI(full.replace(/\\/g, '/')), absolutePath: full };
+  return { absolutePath: full };
 });
 
 ipcMain.handle('reveal', (_e, { absolutePath }) => {
@@ -387,16 +431,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  // Custom protocol that maps sfxlib:// URLs to absolute file paths.
-  // Lets the renderer use a single URL form and keeps file:// out of the DOM.
-  protocol.handle('sfxlib', (req) => {
-    const u = new URL(req.url);
-    const p = decodeURI(u.pathname);
-    // On macOS / Linux, pathname is /Volumes/...; on Windows it's /C:/...
-    const fixed = process.platform === 'win32' && /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p;
-    return new Response(fs.createReadStream(fixed));
-  });
-
   openDb();
   createWindow();
 
