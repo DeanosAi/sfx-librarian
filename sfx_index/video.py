@@ -150,7 +150,7 @@ def extract_thumbnail(video_path: Path, output_path: Path,
 # Vision tagger (Ollama)
 # --------------------------------------------------------------------------
 
-DEFAULT_VISION_MODEL = "qwen2-vl:7b"
+DEFAULT_VISION_MODEL = "llama3.2-vision:11b"
 
 
 VIDEO_TAG_SYSTEM_PROMPT = """You are an expert video tagger for an editor's footage library. Your tags become a searchable FTS5 index. Editors will type queries like:

@@ -27,18 +27,19 @@ You can index the same way for any video collection — B-roll, transitions, sto
 In any PowerShell, with Ollama running:
 
 ```powershell
-ollama pull qwen2-vl:7b
+ollama pull llama3.2-vision:11b
 ```
 
-This is ~4.7 GB. Other vision models that work with the same API:
+This is ~7.5 GB and is the **default** model used by the indexer. Other vision models that work with the same API:
 
 | Model | Size | Quality | Speed on 3090 |
 |---|---|---|---|
-| `qwen2-vl:7b` | 4.7 GB | very good | fast |
-| `llama3.2-vision:11b` | 7.5 GB | very good | medium |
+| `llama3.2-vision:11b` *(default)* | 7.5 GB | very good | medium |
+| `qwen2.5-vl:7b` | ~4.7 GB | very good | fast |
 | `llava:13b` | 7.5 GB | good | medium |
+| `moondream` | 1.8 GB | OK | very fast |
 
-`qwen2-vl:7b` is the default — solid tag quality, fast iteration.
+If `llama3.2-vision:11b` 404s on pull, try `qwen2.5-vl:7b` or `llava:13b` — Ollama's library shifts naming sometimes. Pass any of these to the indexer with `--model NAME`.
 
 Verify:
 
