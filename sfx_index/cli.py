@@ -14,6 +14,14 @@ from sfx_index.probe import probe_file
 from sfx_index.tagger import DEFAULT_MODEL, check_ollama_available, tag_row
 from sfx_index.transcribe import transcribe_file
 from sfx_index.walker import iter_audio_files
+from sfx_index.video import (
+    DEFAULT_VISION_MODEL,
+    check_ollama_vision,
+    extract_thumbnail,
+    iter_video_files,
+    probe_video,
+    tag_video,
+)
 
 
 @click.group()
@@ -479,6 +487,218 @@ def search(query: str, limit: int) -> None:
         click.echo(f"     {r['duration_seconds']:.1f}s | {r['ai_category']} | mood: {r['ai_mood']}")
         click.echo(f"     tags: {top_tags}{'...' if len(tags) > 8 else ''}")
         click.echo("")
+
+
+# =====================================================================
+# Video pipeline (B-roll / transitions / any video library)
+# =====================================================================
+
+@cli.command(name="video-index")
+@click.argument("library_root", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--db", "db_path_str", type=str, default="data/broll_library.db",
+              help="Output DB file. Use a different path per media kind, "
+                   "e.g. data/broll_library.db, data/transitions_library.db.")
+@click.option("--thumbnails", "thumbs_str", type=str, default=None,
+              help="Folder for extracted thumbnails. Default: <db parent>/thumbnails/.")
+@click.option("--limit", type=int, default=None, help="Stop after N files (for testing).")
+@click.option("--model", type=str, default=DEFAULT_VISION_MODEL,
+              help="Ollama vision model (e.g. qwen2-vl:7b, llama3.2-vision:11b).")
+@click.option("--skip-tag", is_flag=True, help="Probe + thumbnail only; skip vision tagging.")
+def video_index(library_root: Path, db_path_str: str, thumbs_str: str | None,
+                limit: int | None, model: str, skip_tag: bool) -> None:
+    """Index a video library: probe → thumbnail → vision-LLM tag.
+
+    Each stage is idempotent — re-running picks up new files only. The output
+    DB is the same shape as the SFX one, with extra video columns populated.
+    """
+    abs_root = library_root.resolve()
+    db_path = Path(db_path_str)
+    thumbs_dir = Path(thumbs_str) if thumbs_str else (db_path.parent / "thumbnails")
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+
+    if not skip_tag:
+        ok, msg = check_ollama_vision(model=model)
+        if not ok:
+            click.echo(f"Ollama vision check failed: {msg}")
+            return
+
+    conn = db_mod.connect(db_path)
+    db_mod.set_config(conn, "library_root", str(abs_root))
+    db_mod.set_config(conn, "media_type", "video")
+
+    # ---- discovery ----
+    click.echo(f"Scanning {abs_root} ...")
+    files = list(iter_video_files(abs_root))
+    click.echo(f"Found {len(files)} video files.")
+    if limit is not None:
+        files = files[:limit]
+    if not files:
+        conn.close()
+        return
+
+    failed_log = Path("failed.log")
+    new_count = updated_count = skipped_count = failed_count = 0
+    thumbed_count = tagged_count = 0
+
+    # ---- pipeline ----
+    with failed_log.open("a", encoding="utf-8") as fail_fp:
+        for path in tqdm(files, unit="file"):
+            try:
+                rel = path.relative_to(abs_root)
+            except ValueError:
+                fail_fp.write(f"{datetime.now().isoformat()}\tRELPATH\t{path}\n")
+                failed_count += 1
+                continue
+            rel_str = str(rel).replace("\\", "/")
+
+            try:
+                stat = path.stat()
+            except OSError:
+                fail_fp.write(f"{datetime.now().isoformat()}\tSTAT\t{path}\n")
+                failed_count += 1
+                continue
+            mtime = int(stat.st_mtime)
+            size = stat.st_size
+
+            existing = conn.execute(
+                "SELECT id, file_modified_time, thumbnail_path, ai_tags "
+                "FROM sfx_files WHERE filepath_relative=?",
+                (rel_str,),
+            ).fetchone()
+
+            # Stage 1: probe (skip if mtime unchanged AND already probed)
+            if existing is not None and existing["file_modified_time"] == mtime \
+                    and existing["thumbnail_path"]:
+                # Already fully probed + thumbed; skip to tag check
+                row_id = existing["id"]
+                width = height = fps = duration = 0
+                vcodec = ""
+                fmt = ""
+            else:
+                result = probe_video(path)
+                if result is None:
+                    fail_fp.write(f"{datetime.now().isoformat()}\tVPROBE\t{path}\n")
+                    failed_count += 1
+                    continue
+                width, height = result["width"], result["height"]
+                fps = result["fps"]
+                duration = result["duration_seconds"]
+                vcodec = result["video_codec"]
+                fmt = result["format"]
+                folder_tags = json.dumps(list(rel.parent.parts))
+
+                if existing is None:
+                    cur = conn.execute(
+                        """
+                        INSERT INTO sfx_files (
+                            filepath_relative, filename, file_size_bytes, file_modified_time,
+                            duration_seconds, format, folder_tags,
+                            media_type, width, height, fps, video_codec
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'video', ?, ?, ?, ?)
+                        """,
+                        (rel_str, path.name, size, mtime,
+                         duration, fmt, folder_tags,
+                         width, height, fps, vcodec),
+                    )
+                    row_id = cur.lastrowid
+                    new_count += 1
+                else:
+                    row_id = existing["id"]
+                    conn.execute(
+                        """
+                        UPDATE sfx_files SET
+                            filename=?, file_size_bytes=?, file_modified_time=?,
+                            duration_seconds=?, format=?,
+                            media_type='video', width=?, height=?, fps=?, video_codec=?
+                        WHERE id=?
+                        """,
+                        (path.name, size, mtime,
+                         duration, fmt, width, height, fps, vcodec, row_id),
+                    )
+                    updated_count += 1
+
+            # Stage 2: thumbnail
+            existing_thumb = conn.execute(
+                "SELECT thumbnail_path FROM sfx_files WHERE id=?", (row_id,)
+            ).fetchone()
+            need_thumb = not existing_thumb or not existing_thumb["thumbnail_path"] \
+                or not Path(existing_thumb["thumbnail_path"]).exists()
+            if need_thumb:
+                thumb_filename = f"{row_id}.jpg"
+                thumb_path = thumbs_dir / thumb_filename
+                ok = extract_thumbnail(path, thumb_path)
+                if ok:
+                    conn.execute(
+                        "UPDATE sfx_files SET thumbnail_path=? WHERE id=?",
+                        (str(thumb_path.resolve()), row_id),
+                    )
+                    thumbed_count += 1
+                else:
+                    fail_fp.write(f"{datetime.now().isoformat()}\tTHUMB\t{path}\n")
+                    # Don't bail — we can still tag via metadata only
+
+            # Stage 3: vision tag
+            if skip_tag:
+                continue
+            tag_status = conn.execute(
+                "SELECT ai_tags, thumbnail_path FROM sfx_files WHERE id=?", (row_id,)
+            ).fetchone()
+            if tag_status["ai_tags"] is not None:
+                skipped_count += 1
+                continue
+            if not tag_status["thumbnail_path"]:
+                # No thumbnail = vision LLM can't tag. Skip; we'll log it.
+                fail_fp.write(f"{datetime.now().isoformat()}\tNOTHUMB\t{path}\n")
+                failed_count += 1
+                continue
+
+            folder_hint = "/".join(list(rel.parent.parts)[-3:]) if rel.parent.parts else "(root)"
+            tag_result = tag_video(
+                Path(tag_status["thumbnail_path"]),
+                path.name, folder_hint,
+                duration, width, height, fps,
+                model=model,
+            )
+            if tag_result is None:
+                fail_fp.write(f"{datetime.now().isoformat()}\tVTAG\t{path}\n")
+                failed_count += 1
+                continue
+
+            conn.execute(
+                """
+                UPDATE sfx_files SET
+                    ai_tags=?, ai_category=?, ai_mood=?, ai_use_cases=?,
+                    tagged_at=?, tagging_model=?
+                WHERE id=?
+                """,
+                (
+                    json.dumps(tag_result["tags"]),
+                    tag_result["category"],
+                    tag_result["mood"],
+                    json.dumps(tag_result["use_cases"]),
+                    datetime.now().isoformat(),
+                    model,
+                    row_id,
+                ),
+            )
+            tagged_count += 1
+            if tagged_count % 5 == 0:
+                conn.commit()
+
+    conn.commit()
+    conn.close()
+
+    click.echo("")
+    click.echo(f"  DB:           {db_path.resolve()}")
+    click.echo(f"  Thumbs dir:   {thumbs_dir.resolve()}")
+    click.echo(f"  New rows:     {new_count}")
+    click.echo(f"  Updated:      {updated_count}")
+    click.echo(f"  Already done: {skipped_count}")
+    click.echo(f"  Thumbnails:   {thumbed_count} extracted")
+    click.echo(f"  Tagged:       {tagged_count}")
+    click.echo(f"  Failed:       {failed_count}")
+    if failed_count > 0:
+        click.echo(f"  Failure log:  {failed_log.resolve()}")
 
 
 if __name__ == "__main__":

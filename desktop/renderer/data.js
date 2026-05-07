@@ -40,22 +40,37 @@
     },
 
     /**
-     * Read the file via IPC, wrap it as a Blob, and return an object URL
-     * usable as an <audio> element's src. Revokes the previous URL first.
+     * Read the file via IPC, wrap it as a Blob, return an object URL
+     * usable as an <audio> or <video> element's src. Revokes the previous
+     * URL first to avoid leaking memory across switches.
      */
     async getAudioUrl(row) {
       revokeLastBlobUrl();
-      const r = await window.api.readAudio({ filepath_relative: row.filepath_relative });
-      if (!r || r.error) throw new Error(r && r.error ? r.error : 'no audio');
-      // r.bytes is an ArrayBuffer (transferred over IPC).
-      const blob = new Blob([r.bytes], { type: r.mime || 'audio/*' });
+      const r = await window.api.readAudio({
+        filepath_relative: row.filepath_relative,
+        kind: currentKind,
+      });
+      if (!r || r.error) throw new Error(r && r.error ? r.error : 'no media');
+      const blob = new Blob([r.bytes], { type: r.mime || 'application/octet-stream' });
       lastBlobUrl = URL.createObjectURL(blob);
       return lastBlobUrl;
     },
     revokeAudioUrl: revokeLastBlobUrl,
 
+    /** Returns a blob: URL for a thumbnail JPEG, or null if missing. */
+    async getThumbnailUrl(row) {
+      if (!row.thumbnail_path) return null;
+      const r = await window.api.readThumbnail({ thumbnail_path: row.thumbnail_path });
+      if (!r || r.error) return null;
+      const blob = new Blob([r.bytes], { type: r.mime || 'image/jpeg' });
+      return URL.createObjectURL(blob);
+    },
+
     async revealInFinder(row) {
-      const r = await window.api.resolveAudioPath({ filepath_relative: row.filepath_relative });
+      const r = await window.api.resolveAudioPath({
+        filepath_relative: row.filepath_relative,
+        kind: currentKind,
+      });
       if (!r || !r.absolutePath) throw new Error(r && r.error ? r.error : 'no path');
       return window.api.revealInFinder({ absolutePath: r.absolutePath });
     },
@@ -93,9 +108,9 @@
 
     async getSettings() { return window.api.getSettings(); },
     async setSettings(patch) { return window.api.setSettings(patch); },
-    async dbStatus() { return window.api.dbStatus(); },
-    async pickDb() { return window.api.pickDb(); },
-    async pickLibrary() { return window.api.pickLibrary(); },
+    async dbStatus(kind) { return window.api.dbStatus({ kind: kind || currentKind }); },
+    async pickDb(kind) { return window.api.pickDb({ kind: kind || currentKind }); },
+    async pickLibrary(kind) { return window.api.pickLibrary({ kind: kind || currentKind }); },
   };
 
   // ----- web-audio helpers (used by trim) -------------------------------

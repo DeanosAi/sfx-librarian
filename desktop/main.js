@@ -27,8 +27,19 @@ const AUDIO_MIME = {
   '.opus': 'audio/opus',
   '.wma':  'audio/x-ms-wma',
 };
-function audioMime(p) {
-  return AUDIO_MIME[path.extname(p).toLowerCase()] || 'audio/*';
+const VIDEO_MIME = {
+  '.mp4':  'video/mp4',
+  '.m4v':  'video/mp4',
+  '.mov':  'video/quicktime',
+  '.mkv':  'video/x-matroska',
+  '.webm': 'video/webm',
+  '.avi':  'video/x-msvideo',
+};
+function audioMime(p) { return AUDIO_MIME[path.extname(p).toLowerCase()] || 'audio/*'; }
+function videoMime(p) { return VIDEO_MIME[path.extname(p).toLowerCase()] || 'video/*'; }
+function mediaMime(p) {
+  const ext = path.extname(p).toLowerCase();
+  return AUDIO_MIME[ext] || VIDEO_MIME[ext] || 'application/octet-stream';
 }
 
 // ---- paths ---------------------------------------------------------------
@@ -38,21 +49,42 @@ const userDataDir = app.getPath('userData');
 const settingsFile = path.join(userDataDir, 'settings.json');
 
 /**
- * Resolve where the SFX library DB lives.
- * Priority:
- *   1. Path stored in user settings (set via the in-app picker)
- *   2. Bundled with the app at extraResources
- *   3. Project root data/sfx_library.db (during dev on Windows)
+ * Resolve the DB path for a given media kind. Each tab can point at its own
+ * .db file; if a kind has no specific path set, we fall back to the legacy
+ * single dbPath setting (so existing setups keep working).
+ *
+ * Settings shape:
+ *   {
+ *     dbPath: "<legacy single DB>",
+ *     dbPaths: { sfx: "...", music: "...", broll: "...", transitions: "..." },
+ *     libraryPaths: { sfx: "...", music: "...", broll: "...", transitions: "..." }
+ *   }
  */
-function resolveDbPath() {
+function resolveDbPath(kind = 'sfx') {
   const settings = loadSettings();
-  if (settings.dbPath && fs.existsSync(settings.dbPath)) return settings.dbPath;
-  if (isPackaged) {
-    const bundled = path.join(process.resourcesPath, 'sfx_library.db');
-    if (fs.existsSync(bundled)) return bundled;
+  const perKind = settings.dbPaths && settings.dbPaths[kind];
+  if (perKind && fs.existsSync(perKind)) return perKind;
+  // SFX falls back to legacy single dbPath, music shares it (same DB, different filter).
+  if ((kind === 'sfx' || kind === 'music') && settings.dbPath && fs.existsSync(settings.dbPath)) {
+    return settings.dbPath;
   }
-  const dev = path.join(__dirname, '..', 'data', 'sfx_library.db');
-  if (fs.existsSync(dev)) return dev;
+  if (kind === 'sfx' || kind === 'music') {
+    if (isPackaged) {
+      const bundled = path.join(process.resourcesPath, 'sfx_library.db');
+      if (fs.existsSync(bundled)) return bundled;
+    }
+    const dev = path.join(__dirname, '..', 'data', 'sfx_library.db');
+    if (fs.existsSync(dev)) return dev;
+  }
+  return null;
+}
+
+function resolveLibraryPath(kind = 'sfx') {
+  const settings = loadSettings();
+  const perKind = settings.libraryPaths && settings.libraryPaths[kind];
+  if (perKind) return perKind;
+  // Legacy: single libraryPath used for sfx + music.
+  if ((kind === 'sfx' || kind === 'music') && settings.libraryPath) return settings.libraryPath;
   return null;
 }
 
@@ -71,30 +103,55 @@ function saveSettings(s) {
 }
 
 // ---- database ------------------------------------------------------------
+//
+// One DB connection cached per kind. Opens lazily on first use, reused
+// across calls. resolveDbPath returns null if nothing's set — callers
+// should handle that.
 
-let db = null;
+const dbConnections = new Map();  // kind -> Database instance
 
-function openDb() {
-  if (db) {
-    try { db.close(); } catch (e) {}
-    db = null;
-  }
-  const dbPath = resolveDbPath();
+function getDb(kind = 'sfx') {
+  const dbPath = resolveDbPath(kind);
   if (!dbPath) return null;
-  db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  return db;
+  const existing = dbConnections.get(kind);
+  if (existing && existing.path === dbPath) return existing.db;
+  // Path changed (or first call) — open fresh
+  if (existing) {
+    try { existing.db.close(); } catch (e) {}
+  }
+  try {
+    const conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+    dbConnections.set(kind, { path: dbPath, db: conn });
+    return conn;
+  } catch (e) {
+    console.error(`[db] open failed for kind=${kind} at ${dbPath}:`, e.message);
+    return null;
+  }
 }
 
-// Used to scope queries to a media kind. Centralized so adding tabs is easy.
+function closeAllDbs() {
+  for (const [, entry] of dbConnections) {
+    try { entry.db.close(); } catch (e) {}
+  }
+  dbConnections.clear();
+}
+
+// SFX and Music share one DB but split it on category. Video kinds (broll,
+// transitions) get their own DB each so we don't filter — let them return
+// everything in their DB.
 const MEDIA_KIND_FILTERS = {
-  sfx:   { sql: "AND ai_category != 'musical'", params: [] },
-  music: { sql: "AND ai_category  = 'musical'", params: [] },
-  // Future tabs each get their own filter or their own DB connection.
+  sfx:         { sql: "AND ai_category != 'musical'", params: [] },
+  music:       { sql: "AND ai_category  = 'musical'", params: [] },
+  broll:       { sql: '', params: [] },
+  transitions: { sql: '', params: [] },
 };
 
 function buildKindClause(kind) {
   return MEDIA_KIND_FILTERS[kind] || { sql: '', params: [] };
 }
+
+const VIDEO_KINDS = new Set(['broll', 'transitions']);
+function isVideoKind(kind) { return VIDEO_KINDS.has(kind); }
 
 // ---- IPC handlers --------------------------------------------------------
 
@@ -106,38 +163,57 @@ ipcMain.handle('settings:set', (_e, patch) => {
   return next;
 });
 
-ipcMain.handle('db:status', () => {
-  const dbPath = resolveDbPath();
-  return { dbPath, ok: !!dbPath };
+/** Deep-merge a per-kind settings update — `kind:'broll', dbPath:'/foo'`
+ *  merges into settings.dbPaths.broll without clobbering other kinds. */
+function patchPerKind(field, kind, value) {
+  const settings = loadSettings();
+  const map = { ...(settings[field] || {}) };
+  if (value) map[kind] = value;
+  else delete map[kind];
+  saveSettings({ ...settings, [field]: map });
+}
+
+ipcMain.handle('db:status', (_e, { kind } = {}) => {
+  const dbPath = resolveDbPath(kind || 'sfx');
+  return { dbPath, ok: !!dbPath, kind: kind || 'sfx' };
 });
 
-ipcMain.handle('db:open-picker', async () => {
+ipcMain.handle('db:open-picker', async (_e, { kind } = {}) => {
+  const k = kind || 'sfx';
   const r = await dialog.showOpenDialog({
-    title: 'Select your SFX library database (sfx_library.db)',
+    title: `Select the ${k.toUpperCase()} library database (.db)`,
     properties: ['openFile'],
     filters: [{ name: 'SQLite database', extensions: ['db'] }],
   });
   if (r.canceled || !r.filePaths[0]) return null;
-  const settings = loadSettings();
-  saveSettings({ ...settings, dbPath: r.filePaths[0] });
-  openDb();
+  patchPerKind('dbPaths', k, r.filePaths[0]);
+  // Also keep legacy dbPath in sync for SFX (so old settings field still works)
+  if (k === 'sfx') {
+    const settings = loadSettings();
+    saveSettings({ ...settings, dbPath: r.filePaths[0] });
+  }
+  closeAllDbs();
   return r.filePaths[0];
 });
 
-ipcMain.handle('library:pick-folder', async () => {
+ipcMain.handle('library:pick-folder', async (_e, { kind } = {}) => {
+  const k = kind || 'sfx';
   const r = await dialog.showOpenDialog({
-    title: 'Select the folder where your audio library lives',
+    title: `Select the ${k.toUpperCase()} folder on this Mac`,
     properties: ['openDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return null;
-  const settings = loadSettings();
-  saveSettings({ ...settings, libraryPath: r.filePaths[0] });
+  patchPerKind('libraryPaths', k, r.filePaths[0]);
+  if (k === 'sfx') {
+    const settings = loadSettings();
+    saveSettings({ ...settings, libraryPath: r.filePaths[0] });
+  }
   return r.filePaths[0];
 });
 
 ipcMain.handle('stats', (_e, { kind } = {}) => {
-  if (!db) openDb();
-  if (!db) return { error: 'no database' };
+  const db = getDb(kind || 'sfx');
+  if (!db) return { error: 'no database', kind };
   const filt = buildKindClause(kind);
   const total = db.prepare(
     `SELECT COUNT(*) c FROM sfx_files WHERE 1=1 ${filt.sql}`
@@ -149,7 +225,7 @@ ipcMain.handle('stats', (_e, { kind } = {}) => {
 });
 
 ipcMain.handle('categories', (_e, { kind } = {}) => {
-  if (!db) openDb();
+  const db = getDb(kind || 'sfx');
   if (!db) return [];
   const filt = buildKindClause(kind);
   const rows = db.prepare(
@@ -162,12 +238,26 @@ ipcMain.handle('categories', (_e, { kind } = {}) => {
   return rows;
 });
 
-// In-memory search index per (db, kind). Built lazily on first search.
+// In-memory search index per kind. Built lazily on first search and reset
+// when the underlying DB changes (e.g. user picks a different file).
 const searchIndexCache = new Map();
+
+function invalidateSearchCaches(kind) {
+  if (kind) {
+    searchIndexCache.delete(kind);
+    vocabCache.delete(kind);
+    vocabCache.delete(kind || '*');
+  } else {
+    searchIndexCache.clear();
+    vocabCache.clear();
+  }
+}
 
 function buildSearchIndex(kind) {
   const cacheKey = `${kind || '*'}`;
   if (searchIndexCache.has(cacheKey)) return searchIndexCache.get(cacheKey);
+  const db = getDb(kind || 'sfx');
+  if (!db) return [];
   const filt = buildKindClause(kind);
   const rows = db.prepare(
     `SELECT id, filename, ai_category, ai_mood, ai_tags, ai_use_cases, transcript
@@ -202,6 +292,7 @@ const vocabCache = new Map();
 function buildVocab(kind) {
   if (vocabCache.has(kind || '*')) return vocabCache.get(kind || '*');
   const idx = buildSearchIndex(kind);
+  if (!idx) return [];
   const words = new Set();
   for (const item of idx) {
     for (const w of item.haystack.split(/\s+/)) {
@@ -254,8 +345,8 @@ function countOccurrences(haystack, needle) {
 }
 
 ipcMain.handle('search', (_e, { q, categories, kind, limit }) => {
-  if (!db) openDb();
-  if (!db) return { results: [], suggestions: [], error: 'no database' };
+  const db = getDb(kind || 'sfx');
+  if (!db) return { results: [], suggestions: [], error: 'no database for ' + (kind || 'sfx') };
 
   q = (q || '').trim();
   const cats = new Set((categories || []).map(c => String(c).toLowerCase()));
@@ -296,7 +387,8 @@ ipcMain.handle('search', (_e, { q, categories, kind, limit }) => {
       `SELECT id, filepath_relative, filename, duration_seconds,
               loudness_lufs, spectral_centroid_mean, sample_rate, channels,
               ai_category, ai_mood, ai_tags, ai_use_cases,
-              waveform_peaks, transcript
+              waveform_peaks, transcript,
+              media_type, width, height, fps, video_codec, thumbnail_path
        FROM sfx_files WHERE id IN (${ph})`
     ).all(...topIds);
     const byId = new Map();
@@ -320,6 +412,12 @@ ipcMain.handle('search', (_e, { q, categories, kind, limit }) => {
         use_cases: parseJson(r.ai_use_cases),
         peaks: parseJson(r.waveform_peaks),
         transcript: (r.transcript || '').trim(),
+        media_type: r.media_type || 'audio',
+        width: r.width,
+        height: r.height,
+        fps: r.fps,
+        video_codec: r.video_codec,
+        thumbnail_path: r.thumbnail_path,
       });
     }
     results = topIds.map(id => byId.get(id)).filter(Boolean);
@@ -366,23 +464,23 @@ ipcMain.handle('suggest', (_e, { q, kind, limit }) => {
 });
 
 /**
- * Read an audio file off disk and return raw bytes + MIME to the renderer.
- * Renderer wraps the bytes in a Blob and creates an object URL — works in
- * every Electron build without needing custom protocols, file:// quirks, or
- * webSecurity tweaks. SFX files are small (a few MB) so loading the whole
- * file is fast and not memory-pressure relevant.
+ * Read a media file (audio OR video) off disk and return raw bytes + MIME.
+ * Renderer wraps the bytes in a Blob and creates an object URL.
+ *
+ * For video, this returns the whole file — fine for short B-roll, slower
+ * for multi-GB clips. We accept that for now; future optimisation could
+ * stream via a custom protocol.
  */
-ipcMain.handle('audio:read', (_e, { filepath_relative }) => {
-  const settings = loadSettings();
-  const root = settings.libraryPath;
-  if (!root) return { error: 'audio folder not set — open Settings and pick it' };
+ipcMain.handle('audio:read', (_e, { filepath_relative, kind } = {}) => {
+  const root = resolveLibraryPath(kind || 'sfx');
+  if (!root) return { error: 'library folder not set — open Settings' };
   const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
   if (!fs.existsSync(full)) return { error: `file missing on disk: ${full}` };
   try {
     const buf = fs.readFileSync(full);
     return {
       bytes: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
-      mime: audioMime(full),
+      mime: mediaMime(full),
       absolutePath: full,
     };
   } catch (e) {
@@ -390,17 +488,28 @@ ipcMain.handle('audio:read', (_e, { filepath_relative }) => {
   }
 });
 
-/**
- * Just resolve the absolute path (without reading bytes). Used by the
- * "reveal in Finder" button.
- */
-ipcMain.handle('audio:resolve-path', (_e, { filepath_relative }) => {
-  const settings = loadSettings();
-  const root = settings.libraryPath;
-  if (!root) return { error: 'audio folder not set' };
+ipcMain.handle('audio:resolve-path', (_e, { filepath_relative, kind } = {}) => {
+  const root = resolveLibraryPath(kind || 'sfx');
+  if (!root) return { error: 'library folder not set' };
   const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
   if (!fs.existsSync(full)) return { error: `file missing: ${full}` };
   return { absolutePath: full };
+});
+
+/** Read a thumbnail JPEG off disk. Used by video result rows. */
+ipcMain.handle('thumbnail:read', (_e, { thumbnail_path } = {}) => {
+  if (!thumbnail_path || !fs.existsSync(thumbnail_path)) {
+    return { error: 'thumbnail missing' };
+  }
+  try {
+    const buf = fs.readFileSync(thumbnail_path);
+    return {
+      bytes: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+      mime: 'image/jpeg',
+    };
+  } catch (e) {
+    return { error: 'read failed: ' + (e && e.message ? e.message : String(e)) };
+  }
 });
 
 ipcMain.handle('reveal', (_e, { absolutePath }) => {
@@ -471,9 +580,8 @@ ipcMain.handle('send-to-premiere', async (_e, args = {}) => {
   if (args.absolutePath) {
     full = args.absolutePath;
   } else if (args.filepath_relative) {
-    const settings = loadSettings();
-    const root = settings.libraryPath;
-    if (!root) return { error: 'audio folder not set — open Settings and pick it' };
+    const root = resolveLibraryPath(args.kind || 'sfx');
+    if (!root) return { error: 'library folder not set — open Settings' };
     full = path.join(root, String(args.filepath_relative).replace(/[\\/]/g, path.sep));
   }
   if (!full) return { error: 'no file specified' };
@@ -543,9 +651,12 @@ ipcMain.handle('audio:save-temp', (_e, { bytes, filename }) => {
 
 ipcMain.handle('app:version', () => app.getVersion());
 
-ipcMain.on('start-drag-file', (event, filepath_relative) => {
-  const settings = loadSettings();
-  const root = settings.libraryPath;
+ipcMain.on('start-drag-file', (event, payload) => {
+  // Accept either a string filepath_relative (legacy) or { filepath_relative, kind }
+  let filepath_relative, kind;
+  if (typeof payload === 'string') { filepath_relative = payload; kind = 'sfx'; }
+  else { filepath_relative = payload.filepath_relative; kind = payload.kind || 'sfx'; }
+  const root = resolveLibraryPath(kind);
   if (!root) return;
   const full = path.join(root, String(filepath_relative).replace(/[\\/]/g, path.sep));
   if (!fs.existsSync(full)) return;

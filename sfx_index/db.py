@@ -25,7 +25,14 @@ CREATE TABLE IF NOT EXISTS sfx_files (
     loudness_lufs REAL,
     spectral_centroid_mean REAL,
     tagged_at TEXT,
-    tagging_model TEXT
+    tagging_model TEXT,
+    -- Video-only fields (NULL for audio entries)
+    media_type TEXT DEFAULT 'audio',
+    width INTEGER,
+    height INTEGER,
+    fps REAL,
+    video_codec TEXT,
+    thumbnail_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sfx_filepath ON sfx_files(filepath_relative);
@@ -64,12 +71,35 @@ END;
 DEFAULT_DB_PATH = Path("data/sfx_library.db")
 
 
+# Columns we may need to add to pre-existing audio DBs that were built before
+# video support landed. SQLite ignores `ADD COLUMN` if the column exists, so
+# we check first and add only what's missing. Tuple = (column_name, sql_type).
+_NEW_COLUMNS = [
+    ("media_type", "TEXT DEFAULT 'audio'"),
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("fps", "REAL"),
+    ("video_codec", "TEXT"),
+    ("thumbnail_path", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add video-related columns to old audio-only DBs in place."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(sfx_files)")}
+    for col_name, col_def in _NEW_COLUMNS:
+        if col_name not in cols:
+            conn.execute(f"ALTER TABLE sfx_files ADD COLUMN {col_name} {col_def}")
+    conn.commit()
+
+
 def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Open (or create) the SQLite DB and ensure the schema is applied."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 

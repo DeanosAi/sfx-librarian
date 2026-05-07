@@ -22,15 +22,13 @@
           <span class="tab-icon">🎵</span>
           <span class="tab-label">Music</span>
         </button>
-        <button class="tab disabled" data-kind="broll" disabled title="Coming soon — index B-roll videos with AI tags">
+        <button class="tab" data-kind="broll" title="B-Roll — index videos with the video-index command">
           <span class="tab-icon">🎬</span>
           <span class="tab-label">B-Roll</span>
-          <span class="tab-soon">soon</span>
         </button>
-        <button class="tab disabled" data-kind="transitions" disabled title="Coming soon">
+        <button class="tab" data-kind="transitions" title="Transitions — short video clips (whip pans, sweeps, etc.)">
           <span class="tab-icon">✂</span>
           <span class="tab-label">Transitions</span>
-          <span class="tab-soon">soon</span>
         </button>
       </nav>
       <div class="sidebar-foot">
@@ -78,14 +76,20 @@
     <div class="modal-card">
       <h2>Settings</h2>
 
+      <p class="modal-help" style="margin-top:0;">
+        Each tab can use its own database and folder. Switch to a tab in the
+        sidebar before clicking Choose, and the picker will configure that
+        tab specifically.
+      </p>
+
       <div class="setting-row">
-        <div class="setting-label">Library database</div>
+        <div class="setting-label">Database <span id="setting-kind-label" class="setting-kind">(SFX)</span></div>
         <div class="setting-value" id="setting-db">—</div>
         <button id="setting-db-pick" type="button" class="btn-secondary">Choose…</button>
       </div>
 
       <div class="setting-row">
-        <div class="setting-label">Audio folder</div>
+        <div class="setting-label">Media folder</div>
         <div class="setting-value" id="setting-library">—</div>
         <button id="setting-library-pick" type="button" class="btn-secondary">Choose…</button>
       </div>

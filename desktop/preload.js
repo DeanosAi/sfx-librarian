@@ -12,9 +12,9 @@ contextBridge.exposeInMainWorld('api', {
   getSettings:      ()       => ipcRenderer.invoke('settings:get'),
   setSettings:      (patch)  => ipcRenderer.invoke('settings:set', patch),
 
-  dbStatus:         ()       => ipcRenderer.invoke('db:status'),
-  pickDb:           ()       => ipcRenderer.invoke('db:open-picker'),
-  pickLibrary:      ()       => ipcRenderer.invoke('library:pick-folder'),
+  dbStatus:         (args)   => ipcRenderer.invoke('db:status', args || {}),
+  pickDb:           (args)   => ipcRenderer.invoke('db:open-picker', args || {}),
+  pickLibrary:      (args)   => ipcRenderer.invoke('library:pick-folder', args || {}),
 
   stats:            (args)   => ipcRenderer.invoke('stats', args || {}),
   categories:       (args)   => ipcRenderer.invoke('categories', args || {}),
@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
 
   readAudio:        (args)   => ipcRenderer.invoke('audio:read', args || {}),
   resolveAudioPath: (args)   => ipcRenderer.invoke('audio:resolve-path', args || {}),
+  readThumbnail:    (args)   => ipcRenderer.invoke('thumbnail:read', args || {}),
   revealInFinder:   (args)   => ipcRenderer.invoke('reveal', args || {}),
   sendToPremiere:   (args)   => ipcRenderer.invoke('send-to-premiere', args || {}),
   detectPremiere:   ()       => ipcRenderer.invoke('detect-premiere'),
@@ -30,5 +31,5 @@ contextBridge.exposeInMainWorld('api', {
   version:          ()       => ipcRenderer.invoke('app:version'),
 
   /** Synchronous fire-and-forget — must be called inside a dragstart event handler. */
-  startDragFile:    (filepath_relative) => ipcRenderer.send('start-drag-file', filepath_relative),
+  startDragFile:    (payload) => ipcRenderer.send('start-drag-file', payload),
 });

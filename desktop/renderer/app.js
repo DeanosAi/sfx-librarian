@@ -59,8 +59,27 @@
     $q.value = '';
     $results.innerHTML = '';
     $hint.textContent = '';
+    stopPlayback();
+    swapMediaPlayer();
     refreshAll();
   });
+
+  function isVideoKind() {
+    const k = window.data && window.data.getKind ? window.data.getKind() : 'sfx';
+    return k === 'broll' || k === 'transitions';
+  }
+  function activePlayer() { return isVideoKind() ? $videoPlayer : $player; }
+  function inactivePlayer() { return isVideoKind() ? $player : $videoPlayer; }
+  function swapMediaPlayer() {
+    if (isVideoKind()) {
+      $videoPlayer.hidden = false;
+      $player.hidden = true;
+    } else {
+      $videoPlayer.hidden = true;
+      $player.hidden = false;
+    }
+  }
+  swapMediaPlayer();
 
   let searchTimer = null;
   let suggestTimer = null;
@@ -109,52 +128,56 @@
     });
   }
 
-  $player.addEventListener('play', () => {
-    setAllPlayBtns(ICON_PLAY);
-    const el = currentRowEl();
-    if (el) el.querySelector('.play-btn').textContent = ICON_PAUSE;
-  });
-  $player.addEventListener('pause', () => {
-    const el = currentRowEl();
-    if (el) el.querySelector('.play-btn').textContent = ICON_PLAY;
-  });
-  $player.addEventListener('ended', () => {
-    const el = currentRowEl();
-    if (el) {
-      el.classList.remove('playing');
-      el.querySelector('.play-btn').textContent = ICON_PLAY;
-    }
-    currentPlayingId = null;
-    $nowPlaying.textContent = '';
-  });
-  $player.addEventListener('error', () => {
-    const err = $player.error;
-    let msg = 'audio playback error';
-    if (err) {
-      msg += ' (code ' + err.code + ')';
-      if (err.message) msg += ': ' + err.message;
-    }
-    $nowPlaying.textContent = msg;
-    console.error('audio error', err);
-  });
-  $player.addEventListener('timeupdate', () => {
-    const el = currentRowEl();
-    if (!el) return;
-    const out = parseFloat(el.dataset.outSec || 'NaN');
-    if (!isNaN(out) && $player.currentTime >= out) {
-      $player.pause();
-      $player.currentTime = parseFloat(el.dataset.inSec || '0') || 0;
-    }
-    const dur = parseFloat(el.dataset.duration || 'NaN');
-    if (!isNaN(dur) && dur > 0) {
-      const ph = el.querySelector('.playhead');
-      if (ph) {
-        const x = ($player.currentTime / dur) * WAVE_W;
-        ph.setAttribute('x1', x.toFixed(2));
-        ph.setAttribute('x2', x.toFixed(2));
+  function attachPlayerListeners(p) {
+    p.addEventListener('play', () => {
+      setAllPlayBtns(ICON_PLAY);
+      const el = currentRowEl();
+      if (el) el.querySelector('.play-btn').textContent = ICON_PAUSE;
+    });
+    p.addEventListener('pause', () => {
+      const el = currentRowEl();
+      if (el) el.querySelector('.play-btn').textContent = ICON_PLAY;
+    });
+    p.addEventListener('ended', () => {
+      const el = currentRowEl();
+      if (el) {
+        el.classList.remove('playing');
+        el.querySelector('.play-btn').textContent = ICON_PLAY;
       }
-    }
-  });
+      currentPlayingId = null;
+      $nowPlaying.textContent = '';
+    });
+    p.addEventListener('error', () => {
+      const err = p.error;
+      let msg = 'playback error';
+      if (err) {
+        msg += ' (code ' + err.code + ')';
+        if (err.message) msg += ': ' + err.message;
+      }
+      $nowPlaying.textContent = msg;
+      console.error('player error', err);
+    });
+    p.addEventListener('timeupdate', () => {
+      const el = currentRowEl();
+      if (!el) return;
+      const out = parseFloat(el.dataset.outSec || 'NaN');
+      if (!isNaN(out) && p.currentTime >= out) {
+        p.pause();
+        p.currentTime = parseFloat(el.dataset.inSec || '0') || 0;
+      }
+      const dur = parseFloat(el.dataset.duration || 'NaN');
+      if (!isNaN(dur) && dur > 0) {
+        const ph = el.querySelector('.playhead');
+        if (ph) {
+          const x = (p.currentTime / dur) * WAVE_W;
+          ph.setAttribute('x1', x.toFixed(2));
+          ph.setAttribute('x2', x.toFixed(2));
+        }
+      }
+    });
+  }
+  attachPlayerListeners($player);
+  attachPlayerListeners($videoPlayer);
 
   // ----- top-level loaders -----
 
@@ -221,13 +244,21 @@
   function closeSettings() { $settingsModal.classList.remove('show'); }
 
   async function refreshSettings() {
+    const kind = window.data.getKind();
     const [s, db, detected] = await Promise.all([
       window.data.getSettings(),
-      window.data.dbStatus(),
+      window.data.dbStatus(kind),
       window.api.detectPremiere(),
     ]);
-    $settingDb.textContent = db && db.dbPath ? db.dbPath : '(not set — pick the sfx_library.db file)';
-    $settingLibrary.textContent = s && s.libraryPath ? s.libraryPath : '(not set — pick your audio root folder)';
+    const $kindLabel = document.getElementById('setting-kind-label');
+    if ($kindLabel) $kindLabel.textContent = `(${kind.toUpperCase()})`;
+
+    const libPath = (s && s.libraryPaths && s.libraryPaths[kind])
+      || ((kind === 'sfx' || kind === 'music') && s && s.libraryPath)
+      || null;
+
+    $settingDb.textContent = db && db.dbPath ? db.dbPath : '(not set — click Choose to pick a .db)';
+    $settingLibrary.textContent = libPath || '(not set — click Choose to pick the folder)';
     if ($settingPremiereName) {
       $settingPremiereName.value = (s && s.premiereAppName) || '';
       $settingPremiereName.placeholder = detected
@@ -395,9 +426,16 @@
     el.dataset.id = String(row.id);
     el.dataset.duration = String(row.duration || 0);
 
+    const isVideo = row.media_type === 'video';
     const dur = row.duration ? row.duration.toFixed(1) + 's' : '—';
-    const lufs = row.lufs != null ? row.lufs.toFixed(1) + ' LUFS' : '';
-    const meta = [dur, lufs].filter(Boolean).join(' · ');
+    let metaParts = [dur];
+    if (isVideo) {
+      if (row.width && row.height) metaParts.push(`${row.width}×${row.height}`);
+      if (row.fps) metaParts.push(row.fps.toFixed(0) + 'fps');
+    } else {
+      if (row.lufs != null) metaParts.push(row.lufs.toFixed(1) + ' LUFS');
+    }
+    const meta = metaParts.filter(Boolean).join(' · ');
     const cat = row.category || 'other';
 
     const topTags = (row.tags || []).slice(0, 14);
@@ -406,6 +444,13 @@
         [...queryTokens].some(qt => t.toLowerCase().includes(qt));
       return `<span class="tag${matched ? ' matched' : ''}">${escapeHtml(t)}</span>`;
     }).join('');
+
+    const visualHtml = isVideo
+      ? `<div class="thumb-wrap">
+           <img class="thumb" alt="" loading="lazy"/>
+           <div class="thumb-meta">${escapeHtml(meta)}</div>
+         </div>`
+      : renderWaveformSvg(row.peaks);
 
     el.innerHTML = `
       <div class="result-header">
@@ -420,8 +465,18 @@
         ${row.mood ? escapeHtml(row.mood) : ''}
       </div>
       <div class="result-tags">${tagsHtml}</div>
-      ${renderWaveformSvg(row.peaks)}
+      ${visualHtml}
     `;
+
+    // Lazy-load thumbnail for video kinds
+    if (isVideo && row.thumbnail_path) {
+      const $img = el.querySelector('.thumb');
+      if ($img) {
+        window.data.getThumbnailUrl(row).then((url) => {
+          if (url) $img.src = url;
+        }).catch(() => { /* ignore */ });
+      }
+    }
 
     el.querySelector('.result-header').addEventListener('click', (e) => {
       // Action buttons handle their own clicks — don't trigger play.
@@ -470,9 +525,11 @@
     // Electron's main process via the IPC bridge.
     const $filename = el.querySelector('.filename');
     $filename.addEventListener('dragstart', (e) => {
-      // Cancel the default HTML5 drag; the main-process startDrag takes over.
       e.preventDefault();
-      window.api.startDragFile(row.filepath_relative);
+      window.api.startDragFile({
+        filepath_relative: row.filepath_relative,
+        kind: window.data.getKind(),
+      });
     });
     return el;
   }
@@ -622,15 +679,16 @@
   // ----- playback -----
 
   async function togglePlayRow(row, el) {
+    const p = activePlayer();
     if (currentPlayingId === row.id) {
-      if ($player.paused) {
+      if (p.paused) {
         const inSec = parseFloat(el.dataset.inSec || 'NaN');
-        if (!isNaN(inSec) && ($player.currentTime < inSec ||
-            $player.currentTime >= parseFloat(el.dataset.outSec || 'Infinity'))) {
-          $player.currentTime = inSec;
+        if (!isNaN(inSec) && (p.currentTime < inSec ||
+            p.currentTime >= parseFloat(el.dataset.outSec || 'Infinity'))) {
+          p.currentTime = inSec;
         }
-        $player.play().catch(() => {});
-      } else $player.pause();
+        p.play().catch(() => {});
+      } else p.pause();
       return;
     }
     clearPlayingClass();
@@ -639,7 +697,7 @@
     currentPlayingId = row.id;
     $nowPlaying.textContent = row.filename;
     try {
-      $player.src = await window.data.getAudioUrl(row);
+      p.src = await window.data.getAudioUrl(row);
     } catch (e) {
       $nowPlaying.textContent = String(e.message || e);
       el.classList.remove('playing');
@@ -650,19 +708,20 @@
     const inSec = parseFloat(el.dataset.inSec || 'NaN');
     if (!isNaN(inSec)) {
       const onLoaded = () => {
-        try { $player.currentTime = inSec; } catch (e) {}
-        $player.removeEventListener('loadedmetadata', onLoaded);
+        try { p.currentTime = inSec; } catch (e) {}
+        p.removeEventListener('loadedmetadata', onLoaded);
       };
-      $player.addEventListener('loadedmetadata', onLoaded);
+      p.addEventListener('loadedmetadata', onLoaded);
     }
-    $player.play().catch(() => {});
+    p.play().catch(() => {});
   }
 
   function stopPlayback() {
-    $player.pause();
-    try { $player.currentTime = 0; } catch (e) {}
-    $player.removeAttribute('src');
-    $player.load();
+    for (const p of [$player, $videoPlayer]) {
+      try { p.pause(); } catch (e) {}
+      try { p.currentTime = 0; } catch (e) {}
+      try { p.removeAttribute('src'); p.load(); } catch (e) {}
+    }
     clearPlayingClass();
     currentPlayingId = null;
     $nowPlaying.textContent = '';
