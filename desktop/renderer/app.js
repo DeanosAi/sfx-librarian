@@ -20,6 +20,7 @@
   const $stats = $('stats');
   const $hint = $('hint');
   const $player = $('player');
+  const $videoPlayer = $('video-player');
   const $nowPlaying = $('now-playing');
   const $stopBtn = $('stop-btn');
   const $suggestions = $('suggestions');
