@@ -238,7 +238,17 @@ def tag_video(thumbnail_path: Path, filename: str, folder_hint: str,
                 {"role": "user", "content": user_prompt, "images": [str(thumbnail_path)]},
             ],
             format="json",
-            options={"temperature": 0.3, "num_predict": 700},
+            options={
+                # Smaller context so the KV cache fits in VRAM. Vision models
+                # default to 32k+ which forces Ollama into CPU mode on most
+                # consumer GPUs. 4096 is more than we need for the prompt + JSON.
+                "num_ctx": 4096,
+                # Force as many transformer layers as possible onto the GPU.
+                # 999 is a sentinel — Ollama clamps to the actual layer count.
+                "num_gpu": 999,
+                "temperature": 0.3,
+                "num_predict": 700,
+            },
         )
     except Exception:
         return None
