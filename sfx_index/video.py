@@ -28,9 +28,8 @@ import ollama
 
 def parse_json_lenient(text: str) -> Optional[dict]:
     """Vision models often ignore the `format=json` constraint and wrap their
-    answer in markdown fences or prefix it with prose. Try a few extraction
-    strategies before giving up.
-    """
+    answer in markdown fences, prefix it with prose, or run into a repetition
+    loop that gets cut off mid-string. Try every salvage strategy."""
     if not text:
         return None
     text = text.strip()
@@ -64,8 +63,38 @@ def parse_json_lenient(text: str) -> Optional[dict]:
                 try:
                     return json.loads(snippet)
                 except json.JSONDecodeError:
-                    start = -1  # try the next opener
+                    start = -1
                     continue
+
+    # Strategy 4 — repair truncated JSON. Common when the model loops and
+    # num_predict cuts it off mid-string. Walk backward from the end, find
+    # the last comma outside a quoted string, truncate there, then close
+    # whatever brackets are still open.
+    if text.startswith("{"):
+        in_str = False
+        escape = False
+        last_safe_comma = -1
+        for i, ch in enumerate(text):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\" and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if not in_str and ch == ",":
+                last_safe_comma = i
+        if last_safe_comma > 0:
+            stem = text[:last_safe_comma]
+            opens_sq  = stem.count("[") - stem.count("]")
+            opens_brc = stem.count("{") - stem.count("}")
+            closing = ("]" * max(0, opens_sq)) + ("}" * max(0, opens_brc))
+            try:
+                return json.loads(stem + closing)
+            except json.JSONDecodeError:
+                pass
 
     return None
 
@@ -206,7 +235,9 @@ VIDEO_TAG_SYSTEM_PROMPT = """You are an expert video tagger for an editor's foot
   - "cinematic mountains drone" — vibe + subject + technique
   - "establishing shot interior office" — use case + setting
 
-Generate 20-40 tags per clip. The breadth matters — editors search loosely.
+Generate 12-22 tags per clip. STOP after that. DO NOT repeat or pad with
+abstract motivational words ("inspiration", "ambition", "passion", etc.) —
+only describe what is visually in the frame.
 ALWAYS include, where applicable:
 
   1. SHOT TYPE — wide, medium, close up, extreme close up, aerial, overhead, top-down, pov, handheld, static, dolly, pan, tilt, zoom
@@ -233,13 +264,13 @@ CATEGORY DECISION (one primary):
 
 OUTPUT exactly this JSON, nothing else:
 {
-  "tags": [array of 20-40 lowercase strings],
+  "tags": [12-22 lowercase strings — visual content only, no abstract concepts, NO repetition],
   "category": "single value from the list above",
-  "mood": "5-10 mood/aesthetic words space-separated",
-  "use_cases": [5-15 editing use-cases — e.g. 'documentary intro', 'travel vlog b-roll', 'corporate interior', 'establishing wide']
+  "mood": "3-7 mood/aesthetic words space-separated",
+  "use_cases": [4-8 editing use-cases — e.g. 'documentary intro', 'travel vlog b-roll', 'establishing wide']
 }
 
-Reply with ONLY the JSON object. Lowercase tags. No duplicates. No prose."""
+Reply with ONLY the JSON object. Lowercase tags. NO duplicates. NO prose. STOP after the closing }."""
 
 
 class TagResult(TypedDict):
@@ -279,8 +310,16 @@ def tag_video(thumbnail_path: Path, filename: str, folder_hint: str,
     options = {
         "num_ctx": 4096,
         "num_gpu": 999,
-        "temperature": 0.3,
-        "num_predict": 700,
+        "temperature": 0.2,
+        # Discourage the repetition loops that llama3.2-vision falls into
+        # when asked for long lists. >1.0 penalises tokens it has already used.
+        "repeat_penalty": 1.25,
+        "repeat_last_n": 256,
+        # 500 tokens is comfortably more than our JSON needs but small enough
+        # that a runaway loop fails fast.
+        "num_predict": 500,
+        # Hard stop the moment we see the closing brace of the JSON object.
+        "stop": ["}\n", "}\r", "}}"],
     }
     client = ollama.Client(host=host)
 
