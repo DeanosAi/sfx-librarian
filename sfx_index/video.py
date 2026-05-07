@@ -17,12 +17,57 @@ thumbnail_path) added; audio-specific columns stay NULL.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterator, Optional, TypedDict
 
 import ffmpeg
 import ollama
+
+
+def parse_json_lenient(text: str) -> Optional[dict]:
+    """Vision models often ignore the `format=json` constraint and wrap their
+    answer in markdown fences or prefix it with prose. Try a few extraction
+    strategies before giving up.
+    """
+    if not text:
+        return None
+    text = text.strip()
+
+    # Strategy 1 — strict parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2 — strip ```json ... ``` fences
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+    if fenced:
+        try:
+            return json.loads(fenced.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3 — find the first balanced {...} block by scanning braces
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                snippet = text[start:i + 1]
+                try:
+                    return json.loads(snippet)
+                except json.JSONDecodeError:
+                    start = -1  # try the next opener
+                    continue
+
+    return None
 
 
 VIDEO_EXTENSIONS = {
@@ -229,40 +274,49 @@ def tag_video(thumbnail_path: Path, filename: str, folder_hint: str,
     user_prompt = _build_user_prompt(
         filename, folder_hint, duration_s, width, height, fps
     )
-    try:
-        client = ollama.Client(host=host)
-        resp = client.chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": VIDEO_TAG_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt, "images": [str(thumbnail_path)]},
-            ],
-            format="json",
-            options={
-                # Smaller context so the KV cache fits in VRAM. Vision models
-                # default to 32k+ which forces Ollama into CPU mode on most
-                # consumer GPUs. 4096 is more than we need for the prompt + JSON.
-                "num_ctx": 4096,
-                # Force as many transformer layers as possible onto the GPU.
-                # 999 is a sentinel — Ollama clamps to the actual layer count.
-                "num_gpu": 999,
-                "temperature": 0.3,
-                "num_predict": 700,
-            },
-        )
-    except Exception:
-        return None
+    # Up to 3 attempts. format='json' is a hint, not a guarantee, so on the
+    # first failure we drop it and rely on the lenient parser instead.
+    options = {
+        "num_ctx": 4096,
+        "num_gpu": 999,
+        "temperature": 0.3,
+        "num_predict": 700,
+    }
+    client = ollama.Client(host=host)
 
-    content = resp.get("message", {}).get("content", "")
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
+    data = None
+    for attempt in range(3):
+        try:
+            kwargs = dict(
+                model=model,
+                messages=[
+                    {"role": "system", "content": VIDEO_TAG_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt, "images": [str(thumbnail_path)]},
+                ],
+                options=options,
+            )
+            # First attempt asks for json; subsequent attempts drop the hint
+            # because some vision models choke on the constraint and emit nothing.
+            if attempt == 0:
+                kwargs["format"] = "json"
+            resp = client.chat(**kwargs)
+        except Exception:
+            continue
+
+        content = resp.get("message", {}).get("content", "")
+        data = parse_json_lenient(content)
+        if data is not None:
+            break
+
+    if data is None:
         return None
 
     raw_tags = data.get("tags") or []
     raw_uses = data.get("use_cases") or []
-    if not isinstance(raw_tags, list) or not isinstance(raw_uses, list):
+    if not isinstance(raw_tags, list):
         return None
+    if not isinstance(raw_uses, list):
+        raw_uses = []  # tolerate missing use_cases rather than throwing the row away
 
     def dedupe(arr):
         seen, out = set(), []
